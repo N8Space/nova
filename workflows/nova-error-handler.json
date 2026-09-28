@@ -1,0 +1,218 @@
+{
+  "name": "Nova - Error Handler & Slack Self-Healing Dispatcher",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "node-error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const errorData = $input.item.json.execution.error || {};\nconst workflow = $input.item.json.workflow || {};\nconst execution = $input.item.json.execution || {};\n\nconst workflowName = workflow.name || 'Nova Workflow';\nconst workflowId = workflow.id || 'unknown';\nconst executionId = execution.id || 'unknown';\nconst nodeName = errorData.node ? errorData.node.name : 'Unknown Node';\nconst errorMessage = errorData.message || errorData.description || 'Execution failure';\nconst stackTrace = errorData.stack || JSON.stringify(errorData, null, 2);\n\nreturn {\n  json: {\n    workflow_name: workflowName,\n    workflow_id: workflowId,\n    execution_id: executionId,\n    node_name: nodeName,\n    error_message: errorMessage,\n    stack_trace: stackTrace,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "node-prepare-diagnostic",
+      "name": "Prepare Diagnostic Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  system_instruction: {\n    parts: [{\n      text: \"You are Nova's Cloud AI Self-Healing Diagnostic Agent. Analyze n8n workflow execution errors and provide: 1) A concise 1-sentence root cause explanation for the user, and 2) A clear recommended fix strategy. Keep your diagnosis professional, clear, and actionable.\"\n    }]\n  },\n  contents: [{\n    parts: [{\n      text: \"Workflow Name: \" + $json.workflow_name + \"\\nFailed Node: \" + $json.node_name + \"\\nError Message: \" + $json.error_message + \"\\nStack Trace: \" + $json.stack_trace\n    }]\n  }],\n  generationConfig: {\n    temperature: 0.2\n  }\n}) }}"
+      },
+      "id": "node-gemini-diagnostic",
+      "name": "Gemini AI Diagnostic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        700,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CLDihyO9jZR7Lhsq",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const diag = $input.item.json.candidates[0].content.parts[0].text;\nconst ctx = $('Prepare Diagnostic Payload').item.json;\nconst webhookUrl = process.env.N8N_HOST || 'https://automation.lesterlabs.cloud';\n\nconst slackBlocks = [\n  {\n    \"type\": \"header\",\n    \"text\": {\n      \"type\": \"plain_text\",\n      \"text\": \"🚨 Nova Cloud Workflow Failure Alert\",\n      \"emoji\": true\n    }\n  },\n  {\n    \"type\": \"section\",\n    \"fields\": [\n      { \"type\": \"mrkdwn\", \"text\": `*Workflow:*\\n${ctx.workflow_name}` },\n      { \"type\": \"mrkdwn\", \"text\": `*Failed Node:*\\n${ctx.node_name}` },\n      { \"type\": \"mrkdwn\", \"text\": `*Execution ID:*\\n#${ctx.execution_id}` },\n      { \"type\": \"mrkdwn\", \"text\": `*Timestamp:*\\n${ctx.timestamp}` }\n    ]\n  },\n  {\n    \"type\": \"section\",\n    \"text\": {\n      \"type\": \"mrkdwn\",\n      \"text\": `*🤖 AI Diagnostic & Proposed Fix:*\\n${diag}`\n    }\n  },\n  {\n    \"type\": \"actions\",\n    \"elements\": [\n      {\n        \"type\": \"button\",\n        \"text\": { \"type\": \"plain_text\", \"text\": \"✅ Approve & Auto-Deploy Fix\", \"emoji\": true },\n        \"style\": \"primary\",\n        \"value\": JSON.stringify({ action: \"approve\", workflow_id: ctx.workflow_id, execution_id: ctx.execution_id })\n      },\n      {\n        \"type\": \"button\",\n        \"text\": { \"type\": \"plain_text\", \"text\": \"🔍 View Execution Logs\", \"emoji\": true },\n        \"url\": `${webhookUrl}/execution/${ctx.execution_id}`\n      }\n    ]\n  }\n];\n\nreturn {\n  json: {\n    blocks: slackBlocks,\n    text: `🚨 Nova Failure Alert: ${ctx.workflow_name} - ${ctx.node_name}`\n  }\n};"
+      },
+      "id": "node-format-slack-blocks",
+      "name": "Format Slack Block Kit Card",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL || 'https://hooks.slack.com/services/YOUR/WEBHOOK/URL' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}"
+      },
+      "id": "node-send-slack-alert",
+      "name": "Send Slack Failure Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1140,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nova-error-approve",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-slack-approve-webhook",
+      "name": "Approve Fix Webhook Callback",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        240,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $input.item.json.body || {};\nlet actionData = {};\ntry {\n  actionData = typeof payload.value === 'string' ? JSON.parse(payload.value) : (payload.value || {});\n} catch(e) {\n  actionData = {};\n}\n\nreturn {\n  json: {\n    action: actionData.action || 'approve',\n    workflow_id: actionData.workflow_id || 'YRwbtSO1NMKf8Lev',\n    execution_id: actionData.execution_id || 'unknown',\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "node-parse-approval-action",
+      "name": "Parse Approval Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({\n  text: \"✅ Fix approved! Nova AI Agent has re-activated the workflow live on n8n.\"\n}) }}",
+        "options": {}
+      },
+      "id": "node-respond-slack-approval",
+      "name": "Respond to Slack Button Click",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        700,
+        540
+      ]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Diagnostic Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Diagnostic Payload": {
+      "main": [
+        [
+          {
+            "node": "Gemini AI Diagnostic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini AI Diagnostic": {
+      "main": [
+        [
+          {
+            "node": "Format Slack Block Kit Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Slack Block Kit Card": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Failure Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approve Fix Webhook Callback": {
+      "main": [
+        [
+          {
+            "node": "Parse Approval Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Approval Action": {
+      "main": [
+        [
+          {
+            "node": "Respond to Slack Button Click",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

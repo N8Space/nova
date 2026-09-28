@@ -1,0 +1,181 @@
+{
+  "name": "Nova - Task & Calendar Sub-Agent",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "48134251-c675-47a8-917d-9cc62b12bdbe",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -736,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.intent }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "TASK"
+            },
+            {
+              "value2": "CALENDAR",
+              "output": 1
+            }
+          ]
+        }
+      },
+      "id": "6fce2dd1-a41c-4fe6-aa39-91237901d3c9",
+      "name": "Task vs Calendar Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        -512,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const trigger = $('Execute Workflow Trigger').item.json;\nconst intent = trigger.intent || 'TASK';\nconst title = (trigger.parameters && trigger.parameters.title) ? trigger.parameters.title : ((trigger.parameters && trigger.parameters.details) ? trigger.parameters.details : (trigger.raw_input || 'Item'));\nconst dateTime = trigger.parameters ? trigger.parameters.date_time : null;\n\nlet formattedTime = '';\nif (dateTime) {\n  try {\n    const validDtStr = /Z|[+-]\\d{2}:\\d{2}$/.test(dateTime) ? dateTime : dateTime + '-05:00';\n    const dt = new Date(validDtStr);\n    formattedTime = dt.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit', hour12: true });\n  } catch (e) {\n    formattedTime = dateTime;\n  }\n}\n\nlet msg = '';\nif (intent === 'CALENDAR') {\n  msg = `I scheduled ${title} on your Google Calendar${formattedTime ? ' for ' + formattedTime : ''}.`;\n} else {\n  msg = `I added ${title} to your Google Tasks${formattedTime ? ' due at ' + formattedTime : ''}.`;\n}\n\nreturn {\n  json: {\n    status: 'COMPLETED',\n    intent: intent,\n    message: msg\n  }\n};"
+      },
+      "id": "6e54a30d-650b-401a-9279-e457299a5ef8",
+      "name": "Format Spoken Task Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "task",
+        "operation": "create",
+        "task": "MDI0NzUyMTIwNjg3NDg0Njc4NzE6MDow",
+        "title": "={{ $json.parameters.title || $json.parameters.details || $json.raw_input || 'New Task' }}",
+        "additionalFields": {
+          "due": "={{ $json.parameters.date_time ? new Date(/Z|[+-]\\d{2}:\\d{2}$/.test($json.parameters.date_time) ? $json.parameters.date_time : $json.parameters.date_time + '-05:00').toISOString().split('T')[0] + 'T00:00:00.000Z' : '' }}",
+          "notes": "={{ ($json.parameters.date_time ? 'Due at ' + new Date(/Z|[+-]\\d{2}:\\d{2}$/.test($json.parameters.date_time) ? $json.parameters.date_time : $json.parameters.date_time + '-05:00').toLocaleTimeString('en-US', {timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit', hour12: true}) + '. ' : '') + ($json.parameters.details || 'Added by Nova Executive Assistant') }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleTasks",
+      "typeVersion": 1,
+      "position": [
+        -288,
+        64
+      ],
+      "id": "420f9ef6-76ce-4aad-8257-6bab9090fbfe",
+      "name": "Create a task",
+      "credentials": {
+        "googleTasksOAuth2Api": {
+          "id": "2sS6m8HQwoxDtGdp",
+          "name": "Google Tasks account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": {
+          "__rl": true,
+          "value": "nathan.scott.lester@gmail.com",
+          "mode": "list",
+          "cachedResultName": "nathan.scott.lester@gmail.com"
+        },
+        "start": "={{ $json.parameters.date_time ? new Date(/Z|[+-]\\d{2}:\\d{2}$/.test($json.parameters.date_time) ? $json.parameters.date_time : $json.parameters.date_time + '-05:00').toISOString() : new Date().toISOString() }}",
+        "end": "={{ $json.parameters.date_time ? new Date(new Date(/Z|[+-]\\d{2}:\\d{2}$/.test($json.parameters.date_time) ? $json.parameters.date_time : $json.parameters.date_time + '-05:00').getTime() + 15 * 60000).toISOString() : new Date(Date.now() + 15 * 60000).toISOString() }}",
+        "additionalFields": {
+          "summary": "={{ $json.parameters.title || $json.parameters.details || $json.raw_input || 'New Event' }}",
+          "description": "={{ $json.parameters.details || 'Scheduled via Nova Executive Assistant' }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        -288,
+        256
+      ],
+      "id": "bfb578e0-3fec-43f5-bd64-9fe798ce9b07",
+      "name": "Create an event",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "sHxjFEqYjcriOUbi",
+          "name": "Google Calendar account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Task vs Calendar Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a task": {
+      "main": [
+        [
+          {
+            "node": "Format Spoken Task Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create an event": {
+      "main": [
+        [
+          {
+            "node": "Format Spoken Task Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Task vs Calendar Switch": {
+      "main": [
+        [
+          {
+            "node": "Create a task",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create an event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "errorWorkflow": "BDU6pMWFP6a2ATK1"
+  },
+  "versionId": "08edef7d-aa8e-422d-916f-3c0e80249e18",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "e63fe606b206684cc17843ebc5b2220d58fe42581dce1c7e3b8e1c1c5adb0e88"
+  },
+  "nodeGroups": [],
+  "id": "HgELZoUSh5Wbh9NH",
+  "tags": []
+}

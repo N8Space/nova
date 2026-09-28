@@ -1,0 +1,352 @@
+{
+  "name": "Nova - Master Orchestrator (100% Hands-Free Siri Edition)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nova-capture",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "3b2a5e46-2b3b-4b78-9e60-74011920d316",
+      "name": "Webhook Capture",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -1136,
+        16
+      ],
+      "webhookId": "6df81df4-671c-48df-9e8b-76ad04ba4a87"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract incoming fields & Session ID for 100% Hands-Free Siri Loop\nconst body = $input.item.json.body || $input.item.json;\nconst headers = $input.item.json.headers || {};\n\nconst sessionId = body.session_id || headers['x-session-id'] || 'default-session';\nconst textInput = body.text_input || '';\nconst binaryData = $input.item.binary ? $input.item.binary.audio_file : null;\n\n// Check workflow static data for existing suspended context\nconst staticData = $getWorkflowStaticData('global');\nconst existingContext = staticData[sessionId] || null;\n\nlet combinedTextPrompt = textInput;\nif (existingContext && existingContext.pendingPrompt) {\n  combinedTextPrompt = `Previous Question: \"${existingContext.pendingPrompt}\"\\nUser Follow-up Answer: \"${textInput}\"`;\n}\n\nconst localTimeStr = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago', dateStyle: 'full', timeStyle: 'full' });\n\nreturn {\n  json: {\n    session_id: sessionId,\n    text_input: combinedTextPrompt,\n    raw_input: textInput,\n    has_audio: !!binaryData,\n    has_existing_context: !!existingContext,\n    user_local_time: localTimeStr\n  },\n  binary: binaryData ? { audio_file: binaryData } : {}\n};"
+      },
+      "id": "0a196462-c94f-491b-8e18-ba5301a5129c",
+      "name": "Prepare Input & Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -912,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  system_instruction: {\n    parts: [{\n      text: \"Act as executive assistant 'Nova'. Current User Local Date & Time: \" + $json.user_local_time + \" (Timezone: America/Chicago / Central Time, UTC-5).\\nParse user audio or text input to evaluate user intent for 100% hands-free voice execution. Return ONLY a valid JSON object matching this schema:\\n{\\n  \\\"status\\\": \\\"READY\\\" | \\\"NEEDS_CLARIFICATION\\\",\\n  \\\"clarification_prompt\\\": \\\"String prompt or null\\\",\\n  \\\"intent\\\": \\\"TASK\\\" | \\\"CALENDAR\\\" | \\\"NOTE\\\" | \\\"RESEARCH\\\" | \\\"AMBIGUOUS\\\",\\n  \\\"parameters\\\": {\\n    \\\"title\\\": \\\"String\\\",\\n    \\\"details\\\": \\\"String\\\",\\n    \\\"date_time\\\": \\\"ISO8601 String with timezone offset or null (e.g. 2026-07-28T17:00:00-05:00)\\\",\\n    \\\"query\\\": \\\"String for research query\\\"\\n  }\\n}\\nTIMEZONE & ROUTING RULES:\\n- All relative voice prompts spoken by user (e.g. 'tomorrow at 5pm') MUST be evaluated in the User's Local Timezone (America/Chicago).\\n- Always include local timezone offset in date_time (e.g. '-05:00').\\n- If a task/reminder request specifies an exact time of day (e.g. 'at 5pm', 'at 3:30', 'at 9am'), set intent to 'CALENDAR' so a timed event notification is scheduled.\\n- If a task/reminder request specifies a date without an exact time of day (e.g. 'tomorrow', 'next Monday'), set intent to 'TASK'.\\nIf intent is missing vital parameters (e.g. date for calendar event, or clear subject for research), set status to NEEDS_CLARIFICATION with a concise spoken question. Do not include markdown codeblocks around the JSON output.\"\n    }]\n  },\n  contents: [{\n    parts: [{\n      text: $json.text_input || \"Process attached voice instruction.\"\n    }]\n  }],\n  generationConfig: {\n    response_mime_type: \"application/json\",\n    temperature: 0.2\n  }\n}) }}",
+        "options": {}
+      },
+      "id": "4893a951-e7ae-46ea-8541-f3d388c040bb",
+      "name": "Gemini 3.6 Flash Parsing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -688,
+        16
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CLDihyO9jZR7Lhsq",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gemini Response JSON for Siri Voice Output\nconst responseText = $input.item.json.candidates[0].content.parts[0].text;\nlet parsed;\ntry {\n  parsed = JSON.parse(responseText);\n} catch (e) {\n  parsed = {\n    status: 'AMBIGUOUS',\n    clarification_prompt: 'I could not understand your request. Could you please rephrase?',\n    intent: 'AMBIGUOUS',\n    parameters: {}\n  };\n}\n\nconst sessionId = $('Prepare Input & Context').item.json.session_id;\nconst staticData = $getWorkflowStaticData('global');\n\nif (parsed.status === 'NEEDS_CLARIFICATION') {\n  // Store state in static data for Clarification Loop\n  staticData[sessionId] = {\n    pendingPrompt: parsed.clarification_prompt,\n    updatedAt: new Date().toISOString()\n  };\n} else {\n  // Clear state on READY\n  if (staticData[sessionId]) {\n    delete staticData[sessionId];\n  }\n}\n\nreturn {\n  json: {\n    session_id: sessionId,\n    status: parsed.status,\n    clarification_prompt: parsed.clarification_prompt,\n    intent: parsed.intent,\n    parameters: parsed.parameters || {}\n  }\n};"
+      },
+      "id": "6b72e152-8fb7-46e9-8fbf-08bc6c9ba8cf",
+      "name": "Evaluate Intent & State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -464,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.status }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "NEEDS_CLARIFICATION"
+            },
+            {
+              "value2": "READY",
+              "output": 1
+            }
+          ]
+        }
+      },
+      "id": "d2896260-31ad-4953-87d2-7e15c318631e",
+      "name": "Status Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({\n  status: 'NEEDS_CLARIFICATION',\n  session_id: $json.session_id,\n  message: $json.clarification_prompt\n}) }}",
+        "options": {}
+      },
+      "id": "8a72ead6-de83-48e6-93e4-4d4a1c65be15",
+      "name": "Respond to iOS (Clarification Spoken)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -16,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.intent }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "RESEARCH"
+            },
+            {
+              "value2": "TASK",
+              "output": 1
+            },
+            {
+              "value2": "CALENDAR",
+              "output": 1
+            },
+            {
+              "value2": "NOTE",
+              "output": 2
+            }
+          ]
+        }
+      },
+      "id": "4eb57d98-5646-4106-820a-e03f01b389e8",
+      "name": "Intent Sub-Agent Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        -16,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "OKDfuESRzTXytHHg",
+        "options": {}
+      },
+      "id": "ad07fa75-4457-4b90-b3b3-27d7b99a8d5d",
+      "name": "Trigger Research Sub-Agent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        208,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "HgELZoUSh5Wbh9NH",
+        "options": {}
+      },
+      "id": "f628fedc-2d07-4148-a666-3d9f3fe87d88",
+      "name": "Trigger Task & Calendar Sub-Agent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        208,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "8Q4YXHFqYrazeR4F",
+        "options": {}
+      },
+      "id": "c91b605a-6076-4080-9b72-98885c6c1469",
+      "name": "Trigger Knowledge Note Sub-Agent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        208,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({\n  status: 'COMPLETED',\n  session_id: $('Prepare Input & Context').item.json.session_id,\n  intent: $('Evaluate Intent & State').item.json.intent,\n  message: $json.message || 'Nova completed your request successfully.'\n}) }}",
+        "options": {}
+      },
+      "id": "484e91ac-3bfd-48a2-8409-4e9690568023",
+      "name": "Respond to iOS (Completed Spoken)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        432,
+        208
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Capture": {
+      "main": [
+        [
+          {
+            "node": "Prepare Input & Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Input & Context": {
+      "main": [
+        [
+          {
+            "node": "Gemini 3.6 Flash Parsing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini 3.6 Flash Parsing": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Intent & State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Intent & State": {
+      "main": [
+        [
+          {
+            "node": "Status Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status Switch": {
+      "main": [
+        [
+          {
+            "node": "Respond to iOS (Clarification Spoken)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Intent Sub-Agent Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intent Sub-Agent Router": {
+      "main": [
+        [
+          {
+            "node": "Trigger Research Sub-Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Trigger Task & Calendar Sub-Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Trigger Knowledge Note Sub-Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Research Sub-Agent": {
+      "main": [
+        [
+          {
+            "node": "Respond to iOS (Completed Spoken)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Task & Calendar Sub-Agent": {
+      "main": [
+        [
+          {
+            "node": "Respond to iOS (Completed Spoken)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Knowledge Note Sub-Agent": {
+      "main": [
+        [
+          {
+            "node": "Respond to iOS (Completed Spoken)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "errorWorkflow": "BDU6pMWFP6a2ATK1"
+  },
+  "versionId": "517111de-6fab-48c5-a624-fcee855cb8b4",
+  "meta": {
+    "instanceId": "e63fe606b206684cc17843ebc5b2220d58fe42581dce1c7e3b8e1c1c5adb0e88"
+  },
+  "nodeGroups": [],
+  "id": "YRwbtSO1NMKf8Lev",
+  "tags": []
+}

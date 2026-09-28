@@ -1,0 +1,197 @@
+{
+  "name": "Nova - Research Sub-Agent",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "node-research-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"system_instruction\": {\n    \"parts\": [{\n      \"text\": \"You are Nova's Research Sub-Agent. Conduct exhaustive live web research for the user's query using Google Search Grounding. Provide a comprehensive executive summary formatted in Markdown with Key Takeaways, Detailed Findings, Sources, and Actionable Next Steps.\"\n    }]\n  },\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"Research Query: {{ $json.parameters.query || $json.parameters.title }}\"\n    }]\n  }],\n  \"tools\": [\n    {\n      \"google_search\": {}\n    }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0.3\n  }\n}"
+      },
+      "id": "node-gemini-research-grounding",
+      "name": "Gemini Grounded Web Research",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        480,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CLDihyO9jZR7Lhsq",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const candidate = $input.item.json.candidates[0];\nconst contentText = candidate.content.parts[0].text;\n\nlet sources = [];\nif (candidate.groundingMetadata && candidate.groundingMetadata.groundingChunks) {\n  sources = candidate.groundingMetadata.groundingChunks.map(c => {\n    if (c.web) return `• [${c.web.title}](${c.web.uri})`;\n    return null;\n  }).filter(Boolean);\n}\n\nconst query = $(\"Execute Workflow Trigger\").item.json.parameters.query || 'Executive Research';\nconst timestamp = new Date().toISOString().split('T')[0];\nconst docTitle = `Nova Research - ${query.substring(0, 40)} (${timestamp})`;\n\nreturn {\n  json: {\n    doc_title: docTitle,\n    query: query,\n    research_content: contentText,\n    sources_list: sources.join('\\n'),\n    timestamp: timestamp\n  }\n};"
+      },
+      "id": "node-format-research-doc",
+      "name": "Format Research Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "title": "={{ $json.doc_title }}",
+        "folderId": {
+          "__rl": true,
+          "value": "root",
+          "mode": "list"
+        }
+      },
+      "id": "node-create-google-doc",
+      "name": "Create Google Doc Report",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        920,
+        300
+      ],
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "IxoPAdUppsTOg64I",
+          "name": "Google Docs account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "document",
+        "operation": "update",
+        "documentURL": "={{ $json.id }}",
+        "simple": true,
+        "actionsUi": {
+          "actionFields": [
+            {
+              "object": "text",
+              "action": "insert",
+              "insertSegment": "body",
+              "locationChoice": "endOfSegmentLocation",
+              "text": "=📌 NOVA EXECUTIVE RESEARCH REPORT\nQuery: {{ $('Format Research Report').item.json.query || 'Executive Research' }}\nDate: {{ $('Format Research Report').item.json.timestamp || new Date().toISOString().split('T')[0] }}\n--------------------------------------------------\n\n{{ $('Format Research Report').item.json.research_content || 'Research completed successfully.' }}\n\nSOURCES & REFERENCES:\n{{ $('Format Research Report').item.json.sources_list || 'Google Search Grounding' }}"
+            }
+          ]
+        },
+        "updateFields": {}
+      },
+      "id": "node-populate-google-doc",
+      "name": "Populate Research Content",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        300
+      ],
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "IxoPAdUppsTOg64I",
+          "name": "Google Docs account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const researchContent = $('Format Research Report').item.json.research_content || '';\nconst query = $('Format Research Report').item.json.query || '';\nconst docId = $('Create Google Doc Report').item.json.id || '';\n\nlet cleanText = researchContent\n  .replace(/#+\\s*/g, '')\n  .replace(/\\*+/g, '')\n  .replace(/\\[([^\\]]+)\\]\\([^\\)]+\\)/g, '$1')\n  .replace(/\\n+/g, ' ')\n  .trim();\n\nif (cleanText.length > 300) {\n  cleanText = cleanText.substring(0, 300) + '... Full report saved to Google Drive.';\n}\n\nreturn {\n  json: {\n    status: 'COMPLETED',\n    query: query,\n    doc_id: docId,\n    doc_url: `https://docs.google.com/document/d/${docId}/edit`,\n    message: `Here is what I found for ${query}: ${cleanText}`\n  }\n};"
+      },
+      "id": "node-format-spoken-output",
+      "name": "Format Spoken Research Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Gemini Grounded Web Research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Grounded Web Research": {
+      "main": [
+        [
+          {
+            "node": "Format Research Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Research Report": {
+      "main": [
+        [
+          {
+            "node": "Create Google Doc Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Google Doc Report": {
+      "main": [
+        [
+          {
+            "node": "Populate Research Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Populate Research Content": {
+      "main": [
+        [
+          {
+            "node": "Format Spoken Research Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "BDU6pMWFP6a2ATK1"
+  }
+}

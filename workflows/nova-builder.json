@@ -1,0 +1,158 @@
+{
+  "name": "Nova - Interactive Slack Feature Builder & Sub-Agent Creator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nova-builder",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "node-slack-builder-webhook",
+      "name": "Slack /nova Webhook Listener",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item.json.body || $input.item.json;\nconst userText = body.text || body.command_text || 'Create a new executive assistant feature';\nconst userName = body.user_name || 'User';\nconst channelId = body.channel_id || '';\nconst responseUrl = body.response_url || '';\n\nreturn {\n  json: {\n    user_text: userText,\n    user_name: userName,\n    channel_id: channelId,\n    response_url: responseUrl,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "node-prepare-builder-input",
+      "name": "Prepare Builder Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  system_instruction: {\n    parts: [{\n      text: \"You are Nova's Cloud Feature Builder Agent. Evaluate user feature requests sent via Slack /nova commands. Formulate a clear, executive response summarizing how Nova can perform or build the requested feature, including actionable architectural components.\"\n    }]\n  },\n  contents: [{\n    parts: [{\n      text: \"User Feature Request from Slack: \" + $json.user_text\n    }]\n  }],\n  generationConfig: {\n    temperature: 0.2\n  }\n}) }}"
+      },
+      "id": "node-gemini-builder-analysis",
+      "name": "Gemini Feature Builder Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        700,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CLDihyO9jZR7Lhsq",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let candidateText = $input.item.json.candidates[0].content.parts[0].text;\nconst inputData = $('Prepare Builder Input').item.json;\n\n// Slack Block Kit character limit is 3,000 per section block\nif (candidateText.length > 2600) {\n  candidateText = candidateText.substring(0, 2600) + '\\n\\n*(Full blueprint truncated to fit Slack character limit)*';\n}\n\nconst slackPayload = {\n  response_type: \"in_channel\",\n  text: `🚀 *Nova Assistant - Feature Command Processed*`,\n  blocks: [\n    {\n      \"type\": \"header\",\n      \"text\": {\n        \"type\": \"plain_text\",\n        \"text\": \"🚀 Nova Feature Request Processed\",\n        \"emoji\": true\n      }\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        { \"type\": \"mrkdwn\", \"text\": `*Requested By:*\\n@${inputData.user_name}` },\n        { \"type\": \"mrkdwn\", \"text\": `*Instruction:*\\n\"${inputData.user_text}\"` }\n      ]\n    },\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": `*🤖 Nova AI Plan & Implementation:*\\n${candidateText}`\n      }\n    },\n    {\n      \"type\": \"context\",\n      \"elements\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"⚡ Nova Cloud Engine • Deployed live on https://automation.lesterlabs.cloud\"\n        }\n      ]\n    }\n  ]\n};\n\nreturn {\n  json: {\n    response_url: inputData.response_url,\n    slack_payload: slackPayload\n  }\n};"
+      },
+      "id": "node-format-builder-slack-response",
+      "name": "Format Slack Builder Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.response_url || $('Prepare Builder Input').item.json.response_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.slack_payload) }}"
+      },
+      "id": "node-post-slack-async-response",
+      "name": "Post Slack Response via Response URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1140,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Slack /nova Webhook Listener": {
+      "main": [
+        [
+          {
+            "node": "Prepare Builder Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Builder Input": {
+      "main": [
+        [
+          {
+            "node": "Gemini Feature Builder Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Feature Builder Analysis": {
+      "main": [
+        [
+          {
+            "node": "Format Slack Builder Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Slack Builder Response": {
+      "main": [
+        [
+          {
+            "node": "Post Slack Response via Response URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "BDU6pMWFP6a2ATK1"
+  }
+}

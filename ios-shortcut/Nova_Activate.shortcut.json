@@ -1,0 +1,77 @@
+{
+  "name": "Activate Nova",
+  "icon": {
+    "color": "Purple",
+    "glyph": "Sparkles"
+  },
+  "trigger": ["Siri", "Widget", "Action Button", "Back Tap"],
+  "inputs": [
+    {
+      "name": "dictated_text",
+      "type": "String",
+      "source": "Dictate Text (Language: English US)"
+    },
+    {
+      "name": "audio_recording",
+      "type": "Media",
+      "source": "Record Audio (Quality: High, Audio Format: M4A)"
+    }
+  ],
+  "actions": [
+    {
+      "step": 1,
+      "name": "Get Session ID",
+      "action": "Get File / Global State",
+      "description": "Reads persistent 'Nova/session_id.txt' from Shortcuts folder, or creates a new 'Session-[Current Date]-[Random Number]' string if null.",
+      "parameters": {
+        "storageKey": "Nova/session_id.txt",
+        "fallback": "Format Text: Session-[Current Date]-[Random Number]"
+      }
+    },
+    {
+      "step": 2,
+      "name": "Spoken Voice Greeting & Capture",
+      "actions": [
+        {
+          "action": "Speak Text",
+          "text": "Go for Nova",
+          "waitUntilFinished": true
+        },
+        {
+          "action": "Dictate Text",
+          "language": "English US",
+          "stopDictating": "After Pause"
+        }
+      ]
+    },
+    {
+      "step": 3,
+      "name": "Construct HTTP Payload",
+      "action": "Format Request",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Session-ID": "ShortcutInput.SessionID"
+      },
+      "body": {
+        "session_id": "ShortcutInput.SessionID",
+        "text_input": "ShortcutInput.DictatedText",
+        "timestamp": "Current Date ISO8601"
+      }
+    },
+    {
+      "step": 4,
+      "name": "POST to n8n Webhook",
+      "action": "Get Contents of URL",
+      "url": "https://<YOUR_N8N_DOMAIN>/webhook/nova-capture",
+      "method": "POST",
+      "requestBodyType": "JSON",
+      "timeout": 30
+    },
+    {
+      "step": 5,
+      "name": "Process Response & Speak",
+      "action": "Evaluate Output",
+      "logic": "If status == 'NEEDS_CLARIFICATION', Speak 'message' and prompt for immediate voice reply using same session_id. If status == 'COMPLETED', Speak 'message' and show notification."
+    }
+  ]
+}

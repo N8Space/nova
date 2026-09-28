@@ -1,0 +1,152 @@
+{
+  "name": "Nova - Knowledge & Note Sub-Agent",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "node-note-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const trigger = $('Execute Workflow Trigger').item.json;\nconst title = (trigger.parameters && trigger.parameters.title) ? trigger.parameters.title : 'Executive Note';\nconst details = (trigger.parameters && trigger.parameters.details) ? trigger.parameters.details : (trigger.raw_input || '');\nconst timestamp = new Date().toISOString();\nconst docTitle = `Nova Note - ${title.substring(0, 35)} (${timestamp.split('T')[0]})`;\n\nreturn {\n  json: {\n    doc_title: docTitle,\n    note_title: title,\n    note_details: details,\n    timestamp: timestamp\n  }\n};"
+      },
+      "id": "node-prepare-note",
+      "name": "Prepare Note Format",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "title": "={{ $json.doc_title }}",
+        "folderId": {
+          "__rl": true,
+          "value": "root",
+          "mode": "list"
+        }
+      },
+      "id": "node-create-note-doc",
+      "name": "Create Google Doc Note",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        700,
+        300
+      ],
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "IxoPAdUppsTOg64I",
+          "name": "Google Docs account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "document",
+        "operation": "update",
+        "documentURL": "={{ $json.id }}",
+        "simple": true,
+        "actionsUi": {
+          "actionFields": [
+            {
+              "object": "text",
+              "action": "insert",
+              "insertSegment": "body",
+              "locationChoice": "endOfSegmentLocation",
+              "text": "=📌 NOVA KNOWLEDGE NOTE\nTitle: {{ $('Prepare Note Format').item.json.note_title }}\nDate Captured: {{ $('Prepare Note Format').item.json.timestamp }}\n--------------------------------------------------\n\n{{ $('Prepare Note Format').item.json.note_details }}"
+            }
+          ]
+        },
+        "updateFields": {}
+      },
+      "id": "7518327f-4aca-4cb2-a003-e351601bb06f",
+      "name": "Populate Note Content",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        920,
+        300
+      ],
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "IxoPAdUppsTOg64I",
+          "name": "Google Docs account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const noteTitle = $('Prepare Note Format').item.json.note_title || 'Note';\nconst docId = $('Create Google Doc Note').item.json.id || '';\n\nreturn {\n  json: {\n    status: 'COMPLETED',\n    doc_id: docId,\n    doc_url: `https://docs.google.com/document/d/${docId}/edit`,\n    message: `I saved your note '${noteTitle}' to Google Drive.`\n  }\n};"
+      },
+      "id": "node-format-spoken-note-output",
+      "name": "Format Spoken Note Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Note Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Note Format": {
+      "main": [
+        [
+          {
+            "node": "Create Google Doc Note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Google Doc Note": {
+      "main": [
+        [
+          {
+            "node": "Populate Note Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Populate Note Content": {
+      "main": [
+        [
+          {
+            "node": "Format Spoken Note Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "BDU6pMWFP6a2ATK1"
+  }
+}
